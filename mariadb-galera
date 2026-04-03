@@ -1,6 +1,6 @@
-#!/bin/bash
+#!/bin/sh
 # =============================================================================
-# mariadb-galera – version 1.0.0
+# mariadb-galera – version 1.1.0
 # =============================================================================
 #
 # One-command installer + cluster IP manager for MariaDB Galera Cluster
@@ -11,7 +11,7 @@
 #   • Supports interactive guided setup and non-interactive install
 #
 # Install (global only):
-#     curl -fsSL https://raw.githubusercontent.com/Wilgat/mariadb-galera/main/mariadb-galera | sudo bash
+#     curl -fsSL https://raw.githubusercontent.com/Wilgat/mariadb-galera/main/mariadb-galera | sudo sh
 #
 # GitHub: https://github.com/Wilgat/mariadb-galera
 #
@@ -21,7 +21,7 @@
 #
 # !!! DO NOT MODIFY OR SIMPLIFY ANY PART OF THIS HEADER OR FUNCTIONS !!!
 #
-# Shebang is deliberately set to #!/bin/bash.
+# Shebang is deliberately set to #!/bin/sh.
 # Repeated safe defaults, redundant checks, and heavy comments are intentional.
 #
 # This script requires root for installation, setup and configuration changes.
@@ -54,7 +54,7 @@
 # ----------------------------- Project Constants -----------------------------
 
 APP_NAME="mariadb-galera"
-VERSION="1.0.0"
+VERSION="1.1.0"
 DESCRIPTION="MariaDB Galera Cluster installer + IP manager"
 
 REPO_USER="Wilgat"
@@ -371,7 +371,7 @@ maybe_install() {
     printf "${YELLOW}Note: '%s' is not installed yet.${NC}\n" "$APP_NAME"
     printf "     Version: ${VERSION}\n\n"
     printf "Recommended installation command:\n\n"
-    printf "     ${GREEN}curl -fsSL %s | sudo bash${NC}\n" "$SCRIPT_URL"
+    printf "     ${GREEN}curl -fsSL %s | sudo sh${NC}\n" "$SCRIPT_URL"
     printf "\n"
 
     local should_install=false
@@ -639,7 +639,7 @@ Options:
 EOF
 }
 
-# =============================================================================
+=============================================================================
 # main()
 # =============================================================================
 main() {
@@ -649,6 +649,19 @@ main() {
     local cmd="interactive"
     local ADD_IP=""
     local REMOVE_IP=""
+
+    # =====================================================================
+    # CRITICAL: Non-interactive mode detection (added fix)
+    # =====================================================================
+    if ! [ -t 0 ] || ! [ -t 1 ]; then
+        # Running in pipe (curl | sudo sh) or non-interactive environment
+        if [ -z "${1:-}" ]; then
+            cmd="install"
+            QUIET=${QUIET:-0}   # Allow quiet if user wants
+            info "Non-interactive mode detected (pipe/curl execution) → forcing install-only mode"
+        fi
+    fi
+    # =====================================================================
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -735,8 +748,8 @@ main() {
             step_message "Non-interactive installation"
             install_mariadb_galera
             ensure_config_dir
-            success "Non-interactive installation completed"
-            info "Run 'sudo ${APP_NAME}' for interactive cluster setup"
+            success "MariaDB + Galera installed successfully."
+            info "Run 'sudo ${APP_NAME}' for interactive cluster setup."
             ;;
         list)
             ip_conf_list
@@ -806,7 +819,6 @@ main() {
             if [[ "$first" =~ ^[Yy] ]]; then
                 success "Bootstrap this node with:"
                 echo "    sudo galera_new_cluster"
-                echo "    (or systemctl start mariadb after bootstrap)"
             else
                 success "Start this node with:"
                 echo "    sudo systemctl start mariadb"
