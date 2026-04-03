@@ -53,10 +53,11 @@
 
 # ----------------------------- Project Constants -----------------------------
 
-APP_NAME="mariadb-galera"
+APP_NAME="mariadb-galera"       # ← HARDCODED - Required for curl | sh install
 VERSION="1.12.0"
 DESCRIPTION="MariaDB Galera Cluster installer + IP manager"
 REMOTE_VERSION=$VERSION
+SH=sh
 
 REPO_USER="Wilgat"
 REPO_NAME="mariadb-galera"
@@ -125,12 +126,18 @@ step_message() {
     STEP=$((STEP + 1))
 }
 
+
 # =============================================================================
 # is_installed() - Robust installation check
 # =============================================================================
 #
 # GENERAL PURPOSE:
-# Checks whether the script is already installed.
+# Checks whether the program is already installed, supporting both root
+# and normal user installations with safe fallbacks.
+#
+# Please don't modify this code for root-only installed
+# You can check [ "$(id -u)" -eq 0 ] before calling / excuting 
+#   this function
 #
 # !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
 # =============================================================================
@@ -140,15 +147,30 @@ is_installed() {
     : "${USER_BIN:=${HOME}/.local/bin}"
     : "${INSTALL_PATH:=${GLOBAL_BIN}/${APP_NAME}}"
 
-    if [ -z "${IS_ROOT:-}" ]; then
-        if [ "$(id -u)" -eq 0 ]; then
-            IS_ROOT=1
-        else
-            IS_ROOT=0
-        fi
+    if [ "$(id -u)" -eq 0 ]; then
+        IS_ROOT=1
+        INSTALL_PATH="${GLOBAL_BIN}/${APP_NAME}"
+    else
+        IS_ROOT=0
+        INSTALL_PATH="${USER_BIN}/${APP_NAME}"
     fi
 
-    [ -f "${INSTALL_PATH}" ] && [ -x "${INSTALL_PATH}" ]
+    # Support explicit parameters or force flags
+    if [ "${1:-}" = "--user" ] || [ "${FORCE_USER:-0}" -eq 1 ]; then
+        [ -f "${USER_BIN}/${APP_NAME}" ] && [ -x "${USER_BIN}/${APP_NAME}" ] && return 0
+        return 1
+    elif [ "${1:-}" = "--global" ] || [ "${FORCE_GLOBAL:-0}" -eq 1 ]; then
+        [ -f "${GLOBAL_BIN}/${APP_NAME}" ] && [ -x "${GLOBAL_BIN}/${APP_NAME}" ] && return 0
+        return 1
+    fi
+
+    # Main logic
+    if [ "$IS_ROOT" -eq 1 ]; then
+        [ -f "${INSTALL_PATH}" ] && [ -x "${INSTALL_PATH}" ]
+    else
+        { [ -f "${GLOBAL_BIN}/${APP_NAME}" ] && [ -x "${GLOBAL_BIN}/${APP_NAME}" ]; } ||
+        { [ -f "${USER_BIN}/${APP_NAME}"   ] && [ -x "${USER_BIN}/${APP_NAME}"   ]; }
+    fi
 }
 
 # =============================================================================
@@ -157,12 +179,18 @@ is_installed() {
 #
 # GENERAL PURPOSE:
 # Safely reads the VERSION constant from the installed script.
+# Used by --version-check and --self-update.
 #
 # !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# Designed to be reusable in other projects.
 # =============================================================================
-
 get_installed_version() {
-    local bin_path="${GLOBAL_BIN}/${APP_NAME}"
+    local bin_path
+    if [ "$IS_ROOT" -eq 1 ] || [ -x "${GLOBAL_BIN}/${APP_NAME}" ]; then
+        bin_path="${GLOBAL_BIN}/${APP_NAME}"
+    else
+        bin_path="${USER_BIN}/${APP_NAME}"
+    fi
 
     if [ -x "$bin_path" ]; then
         grep '^VERSION="' "$bin_path" 2>/dev/null | cut -d'"' -f2 || echo "unknown"
@@ -177,8 +205,10 @@ get_installed_version() {
 #
 # GENERAL PURPOSE:
 # Fetches the latest version from GitHub raw and compares with installed one.
+# If not installed and running in interactive terminal, it suggests installation.
 #
 # !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# Designed to be reusable in other projects.
 # =============================================================================
 
 version_check() {
@@ -206,15 +236,16 @@ version_check() {
         warn "A newer version is available (${REMOTE_VERSION})"
     fi
 }
-
 # =============================================================================
 # self_update() - Perform self-update to latest version
 # =============================================================================
 #
 # GENERAL PURPOSE:
 # Downloads and installs the latest version from GitHub.
+# Respects --force and --quiet.
 #
 # !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# Designed to be reusable in other projects.
 # =============================================================================
 
 self_update() {
@@ -289,12 +320,29 @@ check_alpine_requirements() {
 # =============================================================================
 #
 # GENERAL PURPOSE:
-# Downloads and installs mariadb-galera to /usr/local/bin (root only).
+# Downloads and installs the script to the correct location (global or user-local).
+#
+# Please don't modify this code for root-only installed
+# You can check [ "$(id -u)" -eq 0 ] before calling / executing 
+#   this function
 #
 # !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# Designed to be reusable in other projects.
 # =============================================================================
 
 perform_self_install() {
+    : "${GLOBAL_BIN:=/usr/local/bin}"
+    : "${USER_BIN:=${HOME}/.local/bin}"
+    : "${INSTALL_PATH:=${GLOBAL_BIN}/${APP_NAME}}"
+
+    if [ "$(id -u)" -eq 0 ]; then
+        IS_ROOT=1
+        INSTALL_PATH="${GLOBAL_BIN}/${APP_NAME}"
+    else
+        IS_ROOT=0
+        INSTALL_PATH="${USER_BIN}/${APP_NAME}"
+    fi
+
     if [ -z "$REMOTE_VERSION" ]; then
         REMOTE_VERSION=${VERSION}
     fi
@@ -305,11 +353,17 @@ perform_self_install() {
         return 0
     fi
 
-    INSTALL_PATH="${GLOBAL_BIN}/${APP_NAME}"
-
-    if ! mkdir -p "${GLOBAL_BIN}" 2>/dev/null; then
-        error "Failed to create ${GLOBAL_BIN}"
-        return 1
+    # Create correct target directory (root vs user)
+    if [ "$IS_ROOT" -eq 1 ]; then
+        if ! mkdir -p "${GLOBAL_BIN}" 2>/dev/null; then
+            error "Failed to create ${GLOBAL_BIN}"
+            return 1
+        fi
+    else
+        if ! mkdir -p "${USER_BIN}" 2>/dev/null; then
+            error "Failed to create ${USER_BIN}"
+            return 1
+        fi
     fi
 
     local tmp_file
@@ -347,6 +401,11 @@ perform_self_install() {
         return 1
     fi
 
+    # Add ~/.local/bin to PATH for normal user installs
+    if [ "$IS_ROOT" -eq 0 ]; then
+        add_to_shell_path
+    fi
+    
     success "${APP_NAME} ${REMOTE_VERSION} successfully installed to ${INSTALL_PATH}"
     return 0
 }
@@ -356,9 +415,10 @@ perform_self_install() {
 # =============================================================================
 #
 # GENERAL PURPOSE:
-# Called when script is not installed.
+# Called when the program is not installed. Shows helpful message and asks for confirmation.
 #
-# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# !!! DO NOT MODIFY OR SIMPLIFY !!!
+# Designed to be reusable in other projects.
 # =============================================================================
 
 maybe_install() {
@@ -370,12 +430,18 @@ maybe_install() {
     printf "${YELLOW}Note: '%s' is not installed yet.${NC}\n" "$APP_NAME"
     printf "     Version: ${VERSION}\n\n"
     printf "Recommended installation command:\n\n"
-    printf "     ${GREEN}curl -fsSL %s | sudo sh${NC}\n" "$SCRIPT_URL"
+
+    if [ "$IS_ROOT" -eq 1 ]; then
+        printf "     ${GREEN}sudo curl -fsSL %s | sudo ${SH}${NC}\n" "$SCRIPT_URL"
+    else
+        printf "     ${GREEN}curl -fsSL %s | ${SH}${NC}\n" "$SCRIPT_URL"
+    fi
     printf "\n"
 
     local should_install=false
 
     if [ -t 0 ] && [ -t 1 ]; then
+        # Interactive terminal
         printf "     Install now? (y/N): "
         read -r answer || true
         case "$answer" in
@@ -383,12 +449,14 @@ maybe_install() {
             *) printf "Installation skipped by user.\n"; return 0 ;;
         esac
     else
+        # Non-interactive (curl | sh, curl | bash, scripts, CI, etc.)
         printf "${YELLOW}Non-interactive mode detected → installing automatically...${NC}\n"
         should_install=true
     fi
 
     if [ "$should_install" = "true" ]; then
         perform_self_install
+        exit 0
     fi
 }
 
@@ -647,6 +715,55 @@ EOF
 
     success "Galera configuration generated"
     info "Cluster address: gcomm://${cluster_ips}"
+}
+
+# =============================================================================
+# generate_galera_config() - Create Galera Cluster Configuration
+# =============================================================================
+#
+# GENERAL PURPOSE:
+# Reads cluster IPs from ${IP_CONF} and generates the final
+# /etc/mysql/conf.d/galera.cnf with correct wsrep_cluster_address.
+#
+# CRITICAL DEFENSIVE REQUIREMENTS - DO NOT MODIFY OR SIMPLIFY:
+#
+#   • This function is the FINAL GATEKEEPER against IPv6 leakage in the cluster.
+#   • MUST strictly filter out ALL IPv6 addresses (anything containing ':')
+#     before building wsrep_cluster_address.
+#   • Old or accidental IPv6 entries in ip.conf MUST NEVER reach galera.cnf.
+#   • MUST warn the user if any IPv6 entries were detected and skipped.
+#   • MUST use only POSIX /bin/sh compatible syntax (no [[, no =~, no bashisms).
+#   • Processing order MUST remain: read file → filter IPv4 only → join with commas.
+#   • The exact structure of the generated galera.cnf (including comments)
+#     and the call to write_file_atomic() must not be changed.
+#   • wsrep_node_address must use the current machine's external IPv4 only.
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+#
+# Any "clean up", refactoring, or combining of steps risks reintroducing IPv6
+# addresses into the cluster or breaking compatibility on minimal systems
+# (Alpine ash, stripped Debian, etc.).
+#
+# This function follows the same strict defensive philosophy as the rest
+# of the mariadb-galera project.
+# =============================================================================
+setup_mariadb_repo() {
+    step_message "Setting up official MariaDB repository"
+    require_root
+
+    info "Installing prerequisites..."
+    apt-get update -qq || true
+    apt-get install -y --no-install-recommends curl gnupg apt-transport-https ca-certificates || die "Failed to install prerequisites"
+
+    info "Adding MariaDB official repository (version ${MARIA_DB_VERSION})..."
+
+    # Official recommended way in 2026
+    curl -sS https://downloads.mariadb.com/MariaDB/mariadb_repo_setup | \
+        bash -s -- --mariadb-server-version="mariadb-${MARIA_DB_VERSION}" || \
+        die "Failed to setup MariaDB repository"
+
+    apt-get update -qq || die "apt-get update failed after adding MariaDB repo"
+    success "MariaDB repository configured"
 }
 
 # =============================================================================
