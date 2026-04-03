@@ -1,6 +1,6 @@
 #!/bin/sh
 # =============================================================================
-# mariadb-galera – version 1.7.0
+# mariadb-galera – version 1.8.0
 # =============================================================================
 #
 # One-command installer + cluster IP manager for MariaDB Galera Cluster
@@ -54,7 +54,7 @@
 # ----------------------------- Project Constants -----------------------------
 
 APP_NAME="mariadb-galera"
-VERSION="1.7.0"
+VERSION="1.8.0"
 DESCRIPTION="MariaDB Galera Cluster installer + IP manager"
 
 REPO_USER="Wilgat"
@@ -676,6 +676,91 @@ EOF
 }
 
 # =============================================================================
+# interactive_setup() - Full interactive Galera cluster setup
+# =============================================================================
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# =============================================================================
+
+interactive_setup() {
+    require_root
+    step_message "Starting interactive Galera cluster setup"
+
+    ensure_config_dir
+    list_local_ips
+
+    ip_conf_list
+
+    # Ask for current external IP
+    local current_ip
+    current_ip=$(detect_external_ip)
+    printf "\nDetected external IP: %s\n" "${current_ip}"
+    printf "Add this IP to cluster? (Y/n): "
+    read -r answer || true
+    case "$answer" in
+        [Yy]*|[Yy][Ee][Ss]*) 
+            ip_conf_add "${current_ip}" 
+            ;;
+    esac
+
+    # Interactive add more IPs
+    while true; do
+        printf "\nAdd another cluster IP? (ip or Enter to skip): "
+        read -r newip || true
+        if [ -z "$newip" ]; then
+            break
+        fi
+        ip_conf_add "$newip"
+    done
+
+    # Show current IPs before remove
+    printf "\n"
+    ip_conf_list
+
+    # Remove IPs if wanted
+    printf "\nWould you like to remove any IP? (y/N): "
+    read -r rem || true
+    case "$rem" in
+        [Yy]*|[Yy][Ee][Ss]*)
+            printf "Enter IP to remove: "
+            read -r remip || true
+            if [ -n "$remip" ]; then
+                ip_conf_remove "$remip"
+            fi
+            ;;
+    esac
+
+    # === NEW SECTION: Final review before generating config and asking about first node ===
+    printf "\n"
+    double_line
+    printf "${GREEN}FINAL CLUSTER IP LIST:${NC}\n"
+    ip_conf_list
+
+    printf "\n${GREEN}This computer's detected IP:${NC} %s\n" "${current_ip}"
+    printf "This IP will be used as wsrep_node_address.\n\n"
+
+    generate_galera_config
+
+    # First node question (now with clear context)
+    printf "\nIs this the FIRST computer in the cluster? (y/N): "
+    read -r first || true
+    case "$first" in
+        [Yy]*|[Yy][Ee][Ss]*)
+            success "Bootstrap this node with:"
+            echo "    sudo galera_new_cluster"
+            ;;
+        *)
+            success "Start this node with:"
+            echo "    sudo systemctl start mariadb"
+            ;;
+    esac
+
+    empty_line
+    success "Setup completed. Check status with: sudo systemctl status mariadb"
+    info "Remember to open firewall port 3306, 4567, 4568, 4444 on all nodes."
+}
+
+# =============================================================================
 # main()
 # =============================================================================
 main() {
@@ -686,18 +771,13 @@ main() {
     local ADD_IP=""
     local REMOVE_IP=""
 
-    # =====================================================================
-    # CRITICAL: Non-interactive mode detection (added fix)
-    # =====================================================================
+    # Non-interactive mode detection
     if ! [ -t 0 ] || ! [ -t 1 ]; then
-        # Running in pipe (curl | sudo sh) or non-interactive environment
         if [ -z "${1:-}" ]; then
             cmd="install"
-            QUIET=${QUIET:-0}   # Allow quiet if user wants
             info "Non-interactive mode detected (pipe/curl execution) → forcing install-only mode"
         fi
     fi
-    # =====================================================================
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -770,7 +850,6 @@ main() {
         exit 0
     fi
 
-    # Check installation for commands that need the script
     if ! is_installed; then
         maybe_install
         if ! is_installed; then
@@ -787,9 +866,11 @@ main() {
             success "MariaDB + Galera installed successfully."
             info "Run 'sudo ${APP_NAME}' for interactive cluster setup."
             ;;
+
         list)
             ip_conf_list
             ;;
+
         add)
             require_root
             if [ -n "${ADD_IP}" ]; then
@@ -798,6 +879,7 @@ main() {
                 error "Usage: ${APP_NAME} add <ip>"
             fi
             ;;
+
         remove)
             require_root
             if [ -n "${REMOVE_IP}" ]; then
@@ -806,69 +888,11 @@ main() {
                 error "Usage: ${APP_NAME} remove <ip>"
             fi
             ;;
+
         interactive)
-            require_root
-            step_message "Starting interactive Galera cluster setup"
-
-            ensure_config_dir
-            list_local_ips
-
-            ip_conf_list
-
-            # Ask for current external IP
-            local current_ip
-            current_ip=$(detect_external_ip)
-            printf "\nDetected external IP: %s\n" "${current_ip}"
-            printf "Add this IP to cluster? (Y/n): "
-            read -r answer || true
-            case "$answer" in
-                [Yy]*|[Yy][Ee][Ss]*) ip_conf_add "${current_ip}" ;;
-            esac
-
-            # Interactive add more IPs
-            while true; do
-                printf "\nAdd another cluster IP? (ip or Enter to skip): "
-                read -r newip || true
-                if [ -z "$newip" ]; then
-                    break
-                fi
-                ip_conf_add "$newip"
-            done
-
-            # Remove IPs if wanted
-            printf "\nWould you like to remove any IP? (y/N): "
-            read -r rem || true
-            case "$rem" in
-                [Yy]*|[Yy][Ee][Ss]*)
-                    ip_conf_list
-                    printf "Enter IP to remove: "
-                    read -r remip || true
-                    if [ -n "$remip" ]; then
-                        ip_conf_remove "$remip"
-                    fi
-                    ;;
-            esac
-
-            generate_galera_config
-
-            # First node question
-            printf "\nIs this the FIRST computer in the cluster? (y/N): "
-            read -r first || true
-            case "$first" in
-                [Yy]*|[Yy][Ee][Ss]*)
-                    success "Bootstrap this node with:"
-                    echo "    sudo galera_new_cluster"
-                    ;;
-                *)
-                    success "Start this node with:"
-                    echo "    sudo systemctl start mariadb"
-                    ;;
-            esac
-
-            empty_line
-            success "Setup completed. Check status with: sudo systemctl status mariadb"
-            info "Remember to open firewall port 3306, 4567, 4568, 4444 on all nodes."
+            interactive_setup
             ;;
+
         *)
             die "Invalid command"
             ;;
