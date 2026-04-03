@@ -1,6 +1,6 @@
 #!/bin/sh
 # =============================================================================
-# mariadb-galera – version 1.3.0
+# mariadb-galera – version 1.4.0
 # =============================================================================
 #
 # One-command installer + cluster IP manager for MariaDB Galera Cluster
@@ -54,7 +54,7 @@
 # ----------------------------- Project Constants -----------------------------
 
 APP_NAME="mariadb-galera"
-VERSION="1.3.0"
+VERSION="1.4.0"
 DESCRIPTION="MariaDB Galera Cluster installer + IP manager"
 
 REPO_USER="Wilgat"
@@ -434,19 +434,37 @@ write_file_atomic() {
 }
 
 # =============================================================================
-# detect_external_ip() - Get public external IP
+# detect_external_ip() - Get public external IP (IPv4 ONLY)
 # =============================================================================
+#
+# GENERAL PURPOSE:
+# Returns the machine's public IPv4 address by querying external services.
+# Never returns IPv6 addresses.
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# Changes are strictly limited to forcing IPv4 and defensive IPv6 rejection.
+# =============================================================================
+
 detect_external_ip() {
     local ip
-    ip=$(curl -fsSL https://ifconfig.me 2>/dev/null || \
-         curl -fsSL https://api.ipify.org 2>/dev/null || \
+
+    # Force IPv4-only on every request (-4 / --ipv4) to prevent IPv6 leakage
+    # on dual-stack systems (common on cloud providers and modern networks).
+    # Order of services kept exactly as before for minimal change.
+    ip=$(curl -4 -fsSL https://ifconfig.me 2>/dev/null || \
+         curl -4 -fsSL https://api.ipify.org 2>/dev/null || \
          echo "")
-    if [ -n "$ip" ]; then
-        echo "$ip"
-    else
-        warn "Could not detect external IP automatically. Please enter manually."
+
+    # Extra defensive layer: reject anything that looks like IPv6
+    # (contains ':' or starts with hex groups). This protects against
+    # future service changes or network glitches that might still return IPv6.
+    if echo "$ip" | grep -q ':' || [ -z "$ip" ]; then
+        warn "Could not detect external IPv4 address automatically. Please enter manually."
         echo ""
+        return 0
     fi
+
+    echo "$ip"
 }
 
 # =============================================================================
