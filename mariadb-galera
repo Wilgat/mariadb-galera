@@ -1,6 +1,6 @@
 #!/bin/sh
 # =============================================================================
-# mariadb-galera – version 1.1.0
+# mariadb-galera – version 1.2.0
 # =============================================================================
 #
 # One-command installer + cluster IP manager for MariaDB Galera Cluster
@@ -54,7 +54,7 @@
 # ----------------------------- Project Constants -----------------------------
 
 APP_NAME="mariadb-galera"
-VERSION="1.1.0"
+VERSION="1.2.0"
 DESCRIPTION="MariaDB Galera Cluster installer + IP manager"
 
 REPO_USER="Wilgat"
@@ -518,36 +518,54 @@ ip_conf_remove() {
 }
 
 # =============================================================================
-# setup_mariadb_repo() - Add official MariaDB repository
+# debconf_noninteractive_mariadb() - Force non-interactive MariaDB install
 # =============================================================================
-setup_mariadb_repo() {
-    step_message "Setting up MariaDB official repository"
+debconf_noninteractive_mariadb() {
     require_root
+    info "Pre-configuring MariaDB debconf for fully non-interactive install..."
 
-    if [ -f "/etc/apt/sources.list.d/mariadb.sources" ]; then
-        info "MariaDB repository already configured"
-        return 0
-    fi
+    export DEBIAN_FRONTEND=noninteractive
+    export DEBCONF_NONINTERACTIVE_SEEN=true
 
-    info "Adding MariaDB 11.8 repository..."
-
-    apt-get update -qq || true
-    apt-get install -y curl ca-certificates gnupg
-
-    mkdir -p /etc/apt/keyrings
-    curl -fsSL https://mariadb.org/mariadb_release_signing_key.pgp -o /etc/apt/keyrings/mariadb-keyring.pgp
-
-    cat <<EOF > /etc/apt/sources.list.d/mariadb.sources
-X-Repolib-Name: MariaDB
-Types: deb
-URIs: https://deb.mariadb.org/11.8/ubuntu
-Suites: $(lsb_release -cs)
-Components: main
-Signed-By: /etc/apt/keyrings/mariadb-keyring.pgp
+    # Pre-answer common MariaDB questions (including Feedback plugin)
+    debconf-set-selections <<EOF
+mariadb-server mysql-server/root_password password ''
+mariadb-server mysql-server/root_password_again password ''
+mariadb-server-11.8 mysql-server/root_password password ''
+mariadb-server-11.8 mysql-server/root_password_again password ''
+mariadb-server mariadb-server/root_password password ''
+mariadb-server mariadb-server/root_password_again password ''
+mariadb-server mariadb-server/feedback-plugin boolean false
+mariadb-server-11.8 mariadb-server/feedback-plugin boolean false
 EOF
 
-    apt-get update -qq
-    success "MariaDB repository added successfully"
+    success "MariaDB debconf pre-configured (Feedback plugin disabled)"
+}
+
+# =============================================================================
+# install_mariadb_galera() - Updated
+# =============================================================================
+install_mariadb_galera() {
+    step_message "Installing MariaDB + Galera"
+    require_root
+
+    setup_mariadb_repo
+
+    debconf_noninteractive_mariadb   # ← New call added here
+
+    info "Installing mariadb-server, mariadb-client and galera-4..."
+    
+    apt-get install -y --no-install-recommends \
+        mariadb-server \
+        mariadb-client \
+        "${GALERA_PACKAGE}" || die "Package installation failed"
+
+    if command -v mariadb >/dev/null 2>&1; then
+        success "MariaDB installed successfully"
+        mariadb --version | head -n 1
+    else
+        die "MariaDB installation failed"
+    fi
 }
 
 # =============================================================================
