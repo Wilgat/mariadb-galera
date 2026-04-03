@@ -1,6 +1,6 @@
 #!/bin/sh
 # =============================================================================
-# mariadb-galera – version 1.11.0
+# mariadb-galera – version 1.12.0
 # =============================================================================
 #
 # One-command installer + cluster IP manager for MariaDB Galera Cluster
@@ -54,7 +54,7 @@
 # ----------------------------- Project Constants -----------------------------
 
 APP_NAME="mariadb-galera"
-VERSION="1.11.0"
+VERSION="1.12.0"
 DESCRIPTION="MariaDB Galera Cluster installer + IP manager"
 REMOTE_VERSION=$VERSION
 
@@ -303,10 +303,6 @@ perform_self_install() {
     if is_installed && [ "${FORCE_REINSTALL}" -eq 0 ]; then
         success "${APP_NAME} is already installed. Use --force to override."
         return 0
-    fi
-
-    if [ "$IS_ROOT" -eq 0 ]; then
-        die "Self-install requires root privileges. Please run with sudo."
     fi
 
     INSTALL_PATH="${GLOBAL_BIN}/${APP_NAME}"
@@ -881,10 +877,8 @@ main() {
     fi
 
     if ! is_installed; then
+        require_root
         maybe_install
-        if ! is_installed; then
-            exit 1
-        fi
     fi
 
     case "${cmd}" in
