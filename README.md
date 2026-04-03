@@ -1,6 +1,6 @@
 # mariadb-galera
 
-<img src="https://img.shields.io/badge/Version-1.10.0-blue?style=flat-square" alt="Version">  
+<img src="https://img.shields.io/badge/Version-1.11.0-blue?style=flat-square" alt="Version">  
 <img src="https://img.shields.io/badge/MariaDB-11.8-orange?style=flat-square&logo=mariadb" alt="MariaDB 11.8">  
 <img src="https://img.shields.io/badge/Galera-26.4-brightgreen?style=flat-square" alt="Galera 26.4">  
 <img src="https://img.shields.io/badge/Ubuntu/Debian-supported-brightgreen?style=flat-square" alt="Ubuntu/Debian">  

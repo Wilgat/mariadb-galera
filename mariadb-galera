@@ -1,6 +1,6 @@
 #!/bin/sh
 # =============================================================================
-# mariadb-galera – version 1.10.0
+# mariadb-galera – version 1.11.0
 # =============================================================================
 #
 # One-command installer + cluster IP manager for MariaDB Galera Cluster
@@ -54,7 +54,7 @@
 # ----------------------------- Project Constants -----------------------------
 
 APP_NAME="mariadb-galera"
-VERSION="1.10.0"
+VERSION="1.11.0"
 DESCRIPTION="MariaDB Galera Cluster installer + IP manager"
 REMOTE_VERSION=$VERSION
 
@@ -784,7 +784,6 @@ ip_conf_count() {
     local count
     count=$(grep -c '^[^#[:space:]]' "${IP_CONF}" 2>/dev/null || echo "0")
 
-    printf "%s\n" "${count}"
     info "Total nodes in cluster: ${count}"
 }
 
