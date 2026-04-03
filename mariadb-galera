@@ -1,6 +1,6 @@
 #!/bin/sh
 # =============================================================================
-# mariadb-galera – version 1.9.0
+# mariadb-galera – version 1.10.0
 # =============================================================================
 #
 # One-command installer + cluster IP manager for MariaDB Galera Cluster
@@ -54,8 +54,9 @@
 # ----------------------------- Project Constants -----------------------------
 
 APP_NAME="mariadb-galera"
-VERSION="1.9.0"
+VERSION="1.10.0"
 DESCRIPTION="MariaDB Galera Cluster installer + IP manager"
+REMOTE_VERSION=$VERSION
 
 REPO_USER="Wilgat"
 REPO_NAME="mariadb-galera"
@@ -183,10 +184,9 @@ get_installed_version() {
 version_check() {
     info "Checking latest version of ${APP_NAME}..."
 
-    local remote_version
-    remote_version=$(curl -fsSL "${SCRIPT_URL}" 2>/dev/null | grep '^VERSION="' | cut -d'"' -f2 || echo "")
+    REMOTE_VERSION=$(curl -fsSL "${SCRIPT_URL}" 2>/dev/null | grep '^VERSION="' | cut -d'"' -f2 || echo "")
 
-    if [ -z "$remote_version" ]; then
+    if [ -z "$REMOTE_VERSION" ]; then
         error "Failed to fetch remote version"
         return 1
     fi
@@ -195,15 +195,15 @@ version_check() {
     local_version=$(get_installed_version)
 
     printf "Local version : %s\n" "$local_version"
-    printf "Latest version: %s\n\n" "$remote_version"
+    printf "Latest version: %s\n\n" "$REMOTE_VERSION"
 
-    if [ "$local_version" = "$remote_version" ]; then
+    if [ "$local_version" = "$REMOTE_VERSION" ]; then
         success "You are running the latest version."
         return 0
     elif [ "$local_version" = "not installed" ]; then
         warn "${APP_NAME} is not installed yet."
     else
-        warn "A newer version is available (${remote_version})"
+        warn "A newer version is available (${REMOTE_VERSION})"
     fi
 }
 
@@ -220,10 +220,10 @@ version_check() {
 self_update() {
     info "Starting self-update of ${APP_NAME}..."
 
-    local remote_version
-    remote_version=$(curl -fsSL "${SCRIPT_URL}" 2>/dev/null | grep '^VERSION="' | cut -d'"' -f2 || echo "")
+    local REMOTE_VERSION
+    REMOTE_VERSION=$(curl -fsSL "${SCRIPT_URL}" 2>/dev/null | grep '^VERSION="' | cut -d'"' -f2 || echo "")
 
-    if [ -z "$remote_version" ]; then
+    if [ -z "$REMOTE_VERSION" ]; then
         error "Failed to fetch latest version"
         return 1
     fi
@@ -231,13 +231,13 @@ self_update() {
     local local_version
     local_version=$(get_installed_version)
 
-    if [ "$local_version" = "$remote_version" ] && [ "${FORCE_REINSTALL}" -eq 0 ]; then
-        success "Already running the latest version (${remote_version})."
+    if [ "$local_version" = "$REMOTE_VERSION" ] && [ "${FORCE_REINSTALL}" -eq 0 ]; then
+        success "Already running the latest version (${REMOTE_VERSION})."
         return 0
     fi
 
-    if [ "$local_version" != "$remote_version" ]; then
-        info "Updating from ${local_version} → ${remote_version}"
+    if [ "$local_version" != "$REMOTE_VERSION" ]; then
+        info "Updating from ${local_version} → ${REMOTE_VERSION}"
     fi
 
     FORCE_REINSTALL=1
@@ -295,7 +295,10 @@ check_alpine_requirements() {
 # =============================================================================
 
 perform_self_install() {
-    info "Starting installation of ${APP_NAME} ${VERSION}..."
+    if [ -z "$REMOTE_VERSION" ]; then
+        REMOTE_VERSION=${VERSION}
+    fi
+    info "Starting installation of ${APP_NAME} ${REMOTE_VERSION}..."
 
     if is_installed && [ "${FORCE_REINSTALL}" -eq 0 ]; then
         success "${APP_NAME} is already installed. Use --force to override."
@@ -348,7 +351,7 @@ perform_self_install() {
         return 1
     fi
 
-    success "${APP_NAME} ${VERSION} successfully installed to ${INSTALL_PATH}"
+    success "${APP_NAME} ${REMOTE_VERSION} successfully installed to ${INSTALL_PATH}"
     return 0
 }
 
