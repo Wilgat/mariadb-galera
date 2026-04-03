@@ -589,6 +589,26 @@ install_mariadb_galera() {
 # =============================================================================
 # generate_galera_config() - Create basic Galera config
 # =============================================================================
+#
+# GENERAL PURPOSE:
+# Reads cluster IPs from ${IP_CONF} and generates /etc/mysql/conf.d/galera.cnf
+#
+# CRITICAL DEFENSIVE REQUIREMENTS - DO NOT MODIFY OR SIMPLIFY:
+#   • MUST filter out ALL IPv6 addresses (anything containing ':') before
+#     building wsrep_cluster_address. Old IPv6 entries in ip.conf must never
+#     reach the final galera.cnf.
+#   • MUST use only POSIX /bin/sh compatible syntax. No [[, no =~, no Bashisms.
+#   • MUST keep the exact order: read → filter IPv4 only → join with commas.
+#   • MUST warn if any IPv6 entries were skipped (to alert user about cleanup).
+#   • The write_file_atomic call and the exact galera.cnf content structure
+#     must remain unchanged.
+#   • This function is the FINAL gatekeeper against IPv6 leakage.
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# Any attempt to "clean up", combine steps, remove the IPv4 filter, or use
+# Bash-specific features will reintroduce IPv6 or break /bin/sh compatibility.
+# =============================================================================
+
 generate_galera_config() {
     step_message "Generating Galera configuration"
     require_root
