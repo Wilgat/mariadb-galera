@@ -1,6 +1,6 @@
 #!/bin/sh
 # =============================================================================
-# mariadb-galera – version 1.2.0
+# mariadb-galera – version 1.3.0
 # =============================================================================
 #
 # One-command installer + cluster IP manager for MariaDB Galera Cluster
@@ -54,7 +54,7 @@
 # ----------------------------- Project Constants -----------------------------
 
 APP_NAME="mariadb-galera"
-VERSION="1.2.0"
+VERSION="1.3.0"
 DESCRIPTION="MariaDB Galera Cluster installer + IP manager"
 
 REPO_USER="Wilgat"
@@ -559,26 +559,6 @@ install_mariadb_galera() {
         mariadb-server \
         mariadb-client \
         "${GALERA_PACKAGE}" || die "Package installation failed"
-
-    if command -v mariadb >/dev/null 2>&1; then
-        success "MariaDB installed successfully"
-        mariadb --version | head -n 1
-    else
-        die "MariaDB installation failed"
-    fi
-}
-
-# =============================================================================
-# install_mariadb_galera() - Install packages
-# =============================================================================
-install_mariadb_galera() {
-    step_message "Installing MariaDB + Galera"
-    require_root
-
-    setup_mariadb_repo
-
-    info "Installing mariadb-server and galera-4..."
-    apt-get install -y mariadb-server mariadb-client "${GALERA_PACKAGE}"
 
     if command -v mariadb >/dev/null 2>&1; then
         success "MariaDB installed successfully"
