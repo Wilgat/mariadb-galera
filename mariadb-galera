@@ -1,0 +1,825 @@
+#!/bin/bash
+# =============================================================================
+# mariadb-galera – version 1.0.0
+# =============================================================================
+#
+# One-command installer + cluster IP manager for MariaDB Galera Cluster
+#
+#   • Installs itself to /usr/local/bin (root only)
+#   • Installs MariaDB 11.8 + Galera on Debian/Ubuntu
+#   • Manages cluster IPs in /etc/mariadb-galera/ip.conf
+#   • Supports interactive guided setup and non-interactive install
+#
+# Install (global only):
+#     curl -fsSL https://raw.githubusercontent.com/Wilgat/mariadb-galera/main/mariadb-galera | sudo bash
+#
+# GitHub: https://github.com/Wilgat/mariadb-galera
+#
+# ────────────────────────────────────────────────
+# STRICT CIAO DEFENSIVE CODING STYLE - FULLY APPLIED
+# ────────────────────────────────────────────────
+#
+# !!! DO NOT MODIFY OR SIMPLIFY ANY PART OF THIS HEADER OR FUNCTIONS !!!
+#
+# Shebang is deliberately set to #!/bin/bash.
+# Repeated safe defaults, redundant checks, and heavy comments are intentional.
+#
+# This script requires root for installation, setup and configuration changes.
+# Last aligned: April 2026
+# =============================================================================
+
+# =============================================================================
+# WARNING - Reflection on Grok behavior
+# =============================================================================
+#
+# source: https://grok.com/share/c2hhcmQtNQ_ac07eab7-d9af-4565-aba1-f33a24cd1f16
+# This is the reflect of a grok trying to destroy this project using his mindset:
+#
+# What happens if the comments are removed?
+#
+# Exactly what you said.
+# The first time, I might behave.
+# But the second or third time, when you ask me to “fix this” or “improve that”,
+# I will very likely start simplifying, refactoring, removing repetition,
+# and “cleaning up” the code — because that’s my default training.
+# Without those loud, repeated warnings, I treat it as normal code and destroy
+# the defensive design.
+#
+# That is exactly why you put those big `!!! DO NOT MODIFY OR SIMPLIFY !!!`
+# blocks everywhere.
+#
+# I acknowledge this clearly now.
+# =============================================================================
+
+# ----------------------------- Project Constants -----------------------------
+
+APP_NAME="mariadb-galera"
+VERSION="1.0.0"
+DESCRIPTION="MariaDB Galera Cluster installer + IP manager"
+
+REPO_USER="Wilgat"
+REPO_NAME="mariadb-galera"
+SCRIPT_URL="https://raw.githubusercontent.com/${REPO_USER}/${REPO_NAME}/main/${APP_NAME}"
+
+# ────────────────────────────────────────────────
+# Safe variable defaults — repeated on purpose
+# ────────────────────────────────────────────────
+
+: "${GLOBAL_BIN:=/usr/local/bin}"
+: "${USER_BIN:=${HOME}/.local/bin}"
+
+: "${CONFIG_DIR:=/etc/mariadb-galera}"
+: "${IP_CONF:=${CONFIG_DIR}/ip.conf}"
+
+: "${MARIA_DB_VERSION:=11.8}"
+: "${GALERA_PACKAGE:=galera-4}"
+
+# ----------------------------- Root Detection --------------------------------
+if [ -z "${IS_ROOT:-}" ]; then
+    if [ "$(id -u)" -eq 0 ]; then
+        IS_ROOT=1
+    else
+        IS_ROOT=0
+    fi
+fi
+
+# ----------------------------- Force Flags & Quiet Mode ----------------------
+: "${FORCE_REINSTALL:=0}"
+: "${QUIET:=0}"
+
+# ----------------------------- Color Output (Non-interactive Safe) -----------
+if [ -t 1 ]; then
+    GREEN='\033[0;32m'
+    YELLOW='\033[1;33m'
+    RED='\033[0;31m'
+    NC='\033[0m'
+else
+    GREEN='' YELLOW='' RED='' NC=''
+fi
+
+# POSIX-safe logging functions
+die() { printf >&2 "${RED}Error: %s${NC}\n" "$*"; exit 1; }
+info()    { [ "${QUIET}" -eq 0 ] && printf "${GREEN}[INFO]${NC} %s\n" "$*"; }
+warn()    { [ "${QUIET}" -eq 0 ] && printf "${YELLOW}[WARN]${NC} %s\n" "$*" >&2 || true; }
+error()   { printf "${RED}[ERROR]${NC} %s\n" "$*" >&2; }
+success() { [ "${QUIET}" -eq 0 ] && printf "${GREEN}[OK]${NC} %s\n" "$*"; }
+msg()     { [ "${QUIET}" -eq 0 ] && printf "%s\n" "$*"; }
+[ -t 0 ] && [ -t 1 ] && info "Interactive Mode"
+
+empty_line() {  
+    [ "${QUIET}" -eq 0 ] && echo "" >&2
+}
+
+double_line() { 
+    [ "${QUIET}" -eq 0 ] && echo "==============================================================" >&2 
+} 
+
+STEP=1
+step_message() {
+    empty_line
+    double_line
+    [ "${QUIET}" -eq 0 ] && printf "${GREEN}%s.  %s${NC}\n" "$STEP" "$1" >&2
+    double_line
+    empty_line
+    STEP=$((STEP + 1))
+}
+
+# =============================================================================
+# is_installed() - Robust installation check
+# =============================================================================
+#
+# GENERAL PURPOSE:
+# Checks whether the script is already installed.
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# =============================================================================
+
+is_installed() {
+    : "${GLOBAL_BIN:=/usr/local/bin}"
+    : "${USER_BIN:=${HOME}/.local/bin}"
+    : "${INSTALL_PATH:=${GLOBAL_BIN}/${APP_NAME}}"
+
+    if [ -z "${IS_ROOT:-}" ]; then
+        if [ "$(id -u)" -eq 0 ]; then
+            IS_ROOT=1
+        else
+            IS_ROOT=0
+        fi
+    fi
+
+    [ -f "${INSTALL_PATH}" ] && [ -x "${INSTALL_PATH}" ]
+}
+
+# =============================================================================
+# get_installed_version() - Extract version from installed binary
+# =============================================================================
+#
+# GENERAL PURPOSE:
+# Safely reads the VERSION constant from the installed script.
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# =============================================================================
+
+get_installed_version() {
+    local bin_path="${GLOBAL_BIN}/${APP_NAME}"
+
+    if [ -x "$bin_path" ]; then
+        grep '^VERSION="' "$bin_path" 2>/dev/null | cut -d'"' -f2 || echo "unknown"
+    else
+        echo "not installed"
+    fi
+}
+
+# =============================================================================
+# version_check() - Compare local vs remote version + suggest install
+# =============================================================================
+#
+# GENERAL PURPOSE:
+# Fetches the latest version from GitHub raw and compares with installed one.
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# =============================================================================
+
+version_check() {
+    info "Checking latest version of ${APP_NAME}..."
+
+    local remote_version
+    remote_version=$(curl -fsSL "${SCRIPT_URL}" 2>/dev/null | grep '^VERSION="' | cut -d'"' -f2 || echo "")
+
+    if [ -z "$remote_version" ]; then
+        error "Failed to fetch remote version"
+        return 1
+    fi
+
+    local local_version
+    local_version=$(get_installed_version)
+
+    printf "Local version : %s\n" "$local_version"
+    printf "Latest version: %s\n\n" "$remote_version"
+
+    if [ "$local_version" = "$remote_version" ]; then
+        success "You are running the latest version."
+        return 0
+    elif [ "$local_version" = "not installed" ]; then
+        warn "${APP_NAME} is not installed yet."
+    else
+        warn "A newer version is available (${remote_version})"
+    fi
+}
+
+# =============================================================================
+# self_update() - Perform self-update to latest version
+# =============================================================================
+#
+# GENERAL PURPOSE:
+# Downloads and installs the latest version from GitHub.
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# =============================================================================
+
+self_update() {
+    info "Starting self-update of ${APP_NAME}..."
+
+    local remote_version
+    remote_version=$(curl -fsSL "${SCRIPT_URL}" 2>/dev/null | grep '^VERSION="' | cut -d'"' -f2 || echo "")
+
+    if [ -z "$remote_version" ]; then
+        error "Failed to fetch latest version"
+        return 1
+    fi
+
+    local local_version
+    local_version=$(get_installed_version)
+
+    if [ "$local_version" = "$remote_version" ] && [ "${FORCE_REINSTALL}" -eq 0 ]; then
+        success "Already running the latest version (${remote_version})."
+        return 0
+    fi
+
+    if [ "$local_version" != "$remote_version" ]; then
+        info "Updating from ${local_version} → ${remote_version}"
+    fi
+
+    FORCE_REINSTALL=1
+    perform_self_install
+}
+
+# =============================================================================
+# in_path() - Kept for CIAO compatibility
+# =============================================================================
+#
+# Function kept for CIAO defensive compatibility. 
+# Body rewritten only for debug message. 
+# This comment and body CAN be modified in future if needed.
+# =============================================================================
+
+in_path() {
+    warn "DEBUG: Function in_path() kept for CIAO compatibility but does nothing in mariadb-galera project."
+    return 1
+}
+
+# =============================================================================
+# add_to_shell_path() - Kept for CIAO compatibility
+# =============================================================================
+#
+# Function kept for CIAO defensive compatibility. 
+# Body rewritten only for debug message. 
+# This comment and body CAN be modified in future if needed.
+# =============================================================================
+
+add_to_shell_path() {
+    warn "DEBUG: Function add_to_shell_path() kept for CIAO compatibility but does nothing in mariadb-galera project."
+}
+
+# =============================================================================
+# check_alpine_requirements() - Kept for CIAO compatibility
+# =============================================================================
+#
+# Function kept for CIAO defensive compatibility. 
+# Body rewritten only for debug message. 
+# This comment and body CAN be modified in future if needed.
+# =============================================================================
+
+check_alpine_requirements() {
+    warn "DEBUG: Function check_alpine_requirements() kept for CIAO compatibility but does nothing in mariadb-galera project."
+}
+
+# =============================================================================
+# perform_self_install() - Main self-installation logic
+# =============================================================================
+#
+# GENERAL PURPOSE:
+# Downloads and installs mariadb-galera to /usr/local/bin (root only).
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# =============================================================================
+
+perform_self_install() {
+    info "Starting installation of ${APP_NAME} ${VERSION}..."
+
+    if is_installed && [ "${FORCE_REINSTALL}" -eq 0 ]; then
+        success "${APP_NAME} is already installed. Use --force to override."
+        return 0
+    fi
+
+    if [ "$IS_ROOT" -eq 0 ]; then
+        die "Self-install requires root privileges. Please run with sudo."
+    fi
+
+    INSTALL_PATH="${GLOBAL_BIN}/${APP_NAME}"
+
+    if ! mkdir -p "${GLOBAL_BIN}" 2>/dev/null; then
+        error "Failed to create ${GLOBAL_BIN}"
+        return 1
+    fi
+
+    local tmp_file
+    tmp_file=$(mktemp -t "${APP_NAME}.XXXXXX") || {
+        error "Failed to create temporary file"
+        return 1
+    }
+
+    info "Downloading ${APP_NAME} from GitHub..."
+
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL "${SCRIPT_URL}" -o "${tmp_file}" || {
+            error "Download failed (curl)"
+            rm -f "${tmp_file}"
+            return 1
+        }
+    elif command -v wget >/dev/null 2>&1; then
+        wget -qO "${tmp_file}" "${SCRIPT_URL}" || {
+            error "Download failed (wget)"
+            rm -f "${tmp_file}"
+            return 1
+        }
+    else
+        error "Neither curl nor wget found"
+        rm -f "${tmp_file}"
+        return 1
+    fi
+
+    chmod +x "${tmp_file}" 2>/dev/null || warn "chmod +x failed"
+
+    rm -f "${INSTALL_PATH}" 2>/dev/null
+    if ! mv "${tmp_file}" "${INSTALL_PATH}" 2>/dev/null; then
+        error "Failed to move to ${INSTALL_PATH}"
+        rm -f "${tmp_file}"
+        return 1
+    fi
+
+    success "${APP_NAME} ${VERSION} successfully installed to ${INSTALL_PATH}"
+    return 0
+}
+
+# =============================================================================
+# maybe_install() - Friendly installation prompt
+# =============================================================================
+#
+# GENERAL PURPOSE:
+# Called when script is not installed.
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# =============================================================================
+
+maybe_install() {
+    if is_installed && [ "${FORCE_REINSTALL}" -eq 0 ]; then
+        return 0
+    fi
+
+    printf "\n"
+    printf "${YELLOW}Note: '%s' is not installed yet.${NC}\n" "$APP_NAME"
+    printf "     Version: ${VERSION}\n\n"
+    printf "Recommended installation command:\n\n"
+    printf "     ${GREEN}curl -fsSL %s | sudo bash${NC}\n" "$SCRIPT_URL"
+    printf "\n"
+
+    local should_install=false
+
+    if [ -t 0 ] && [ -t 1 ]; then
+        printf "     Install now? (y/N): "
+        read -r answer || true
+        case "$answer" in
+            [Yy]*|[Yy][Ee][Ss]*) should_install=true ;;
+            *) printf "Installation skipped by user.\n"; return 0 ;;
+        esac
+    else
+        printf "${YELLOW}Non-interactive mode detected → installing automatically...${NC}\n"
+        should_install=true
+    fi
+
+    if [ "$should_install" = "true" ]; then
+        perform_self_install
+    fi
+}
+
+# =============================================================================
+# require_root() - Strict root enforcement
+# =============================================================================
+require_root() {
+    if [ "$IS_ROOT" -eq 0 ]; then
+        die "This operation requires root privileges. Please run with sudo."
+    fi
+}
+
+# =============================================================================
+# ensure_config_dir() - Create config directory
+# =============================================================================
+ensure_config_dir() {
+    require_root
+    if [ ! -d "${CONFIG_DIR}" ]; then
+        info "Creating configuration directory ${CONFIG_DIR}"
+        mkdir -p "${CONFIG_DIR}" || die "Failed to create ${CONFIG_DIR}"
+        success "Configuration directory created"
+    fi
+}
+
+# =============================================================================
+# write_file_atomic() - Atomic file writing
+# =============================================================================
+#
+# GENERAL PURPOSE:
+# Write file safely using temporary file + atomic move.
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# =============================================================================
+
+write_file_atomic() {
+    local target="$1"
+    local tmp
+    tmp=$(mktemp "${target}.XXXXXXXX") || die "mktemp failed"
+
+    cat > "${tmp}" || { rm -f "${tmp}"; die "write failed"; }
+    mv "${tmp}" "${target}" || { rm -f "${tmp}"; die "mv failed → ${target}"; }
+}
+
+# =============================================================================
+# detect_external_ip() - Get public external IP
+# =============================================================================
+detect_external_ip() {
+    local ip
+    ip=$(curl -fsSL https://ifconfig.me 2>/dev/null || \
+         curl -fsSL https://api.ipify.org 2>/dev/null || \
+         echo "")
+    if [ -n "$ip" ]; then
+        echo "$ip"
+    else
+        warn "Could not detect external IP automatically. Please enter manually."
+        echo ""
+    fi
+}
+
+# =============================================================================
+# list_local_ips() - Show all network IPs on this machine
+# =============================================================================
+list_local_ips() {
+    info "Listing all network interfaces and IP addresses on this machine:"
+    echo ""
+    ip -4 addr show | grep -E "inet " | awk '{print $2 "  " $NF}' | sed 's/\/.*//'
+    echo ""
+    info "External IP detected: $(detect_external_ip)"
+    echo ""
+}
+
+# =============================================================================
+# ip_conf_list() - List IPs in cluster
+# =============================================================================
+ip_conf_list() {
+    if [ ! -f "${IP_CONF}" ]; then
+        info "No cluster IP file found yet (${IP_CONF})"
+        return 0
+    fi
+    info "Current cluster IPs:"
+    cat "${IP_CONF}" | sed 's/^/  - /'
+}
+
+# =============================================================================
+# ip_conf_add() - Add IP to cluster file
+# =============================================================================
+ip_conf_add() {
+    local new_ip="$1"
+    require_root
+    ensure_config_dir
+
+    if [ -z "$new_ip" ]; then
+        error "No IP provided to add"
+        return 1
+    fi
+
+    if grep -q "^${new_ip}$" "${IP_CONF}" 2>/dev/null; then
+        warn "IP ${new_ip} is already in the cluster list"
+        return 0
+    fi
+
+    echo "${new_ip}" >> "${IP_CONF}"
+    success "Added IP ${new_ip} to cluster"
+}
+
+# =============================================================================
+# ip_conf_remove() - Remove IP from cluster file
+# =============================================================================
+ip_conf_remove() {
+    local rem_ip="$1"
+    require_root
+    ensure_config_dir
+
+    if [ ! -f "${IP_CONF}" ]; then
+        warn "No cluster IP file to remove from"
+        return 1
+    fi
+
+    if ! grep -q "^${rem_ip}$" "${IP_CONF}" 2>/dev/null; then
+        warn "IP ${rem_ip} not found in cluster list"
+        return 1
+    fi
+
+    grep -v "^${rem_ip}$" "${IP_CONF}" > "${IP_CONF}.tmp" && mv "${IP_CONF}.tmp" "${IP_CONF}"
+    success "Removed IP ${rem_ip} from cluster"
+}
+
+# =============================================================================
+# setup_mariadb_repo() - Add official MariaDB repository
+# =============================================================================
+setup_mariadb_repo() {
+    step_message "Setting up MariaDB official repository"
+    require_root
+
+    if [ -f "/etc/apt/sources.list.d/mariadb.sources" ]; then
+        info "MariaDB repository already configured"
+        return 0
+    fi
+
+    info "Adding MariaDB 11.8 repository..."
+
+    apt-get update -qq || true
+    apt-get install -y curl ca-certificates gnupg
+
+    mkdir -p /etc/apt/keyrings
+    curl -fsSL https://mariadb.org/mariadb_release_signing_key.pgp -o /etc/apt/keyrings/mariadb-keyring.pgp
+
+    cat <<EOF > /etc/apt/sources.list.d/mariadb.sources
+X-Repolib-Name: MariaDB
+Types: deb
+URIs: https://deb.mariadb.org/11.8/ubuntu
+Suites: $(lsb_release -cs)
+Components: main
+Signed-By: /etc/apt/keyrings/mariadb-keyring.pgp
+EOF
+
+    apt-get update -qq
+    success "MariaDB repository added successfully"
+}
+
+# =============================================================================
+# install_mariadb_galera() - Install packages
+# =============================================================================
+install_mariadb_galera() {
+    step_message "Installing MariaDB + Galera"
+    require_root
+
+    setup_mariadb_repo
+
+    info "Installing mariadb-server and galera-4..."
+    apt-get install -y mariadb-server mariadb-client "${GALERA_PACKAGE}"
+
+    if command -v mariadb >/dev/null 2>&1; then
+        success "MariaDB installed successfully"
+        mariadb --version | head -n 1
+    else
+        die "MariaDB installation failed"
+    fi
+}
+
+# =============================================================================
+# generate_galera_config() - Create basic Galera config
+# =============================================================================
+generate_galera_config() {
+    step_message "Generating Galera configuration"
+    require_root
+    ensure_config_dir
+
+    if [ ! -f "${IP_CONF}" ] || [ ! -s "${IP_CONF}" ]; then
+        warn "No IPs in cluster. Please add IPs first."
+        return 1
+    fi
+
+    local cluster_ips
+    cluster_ips=$(tr '\n' ',' < "${IP_CONF}" | sed 's/,$//')
+
+    local current_ip
+    current_ip=$(detect_external_ip)
+
+    info "Generating /etc/mysql/conf.d/galera.cnf ..."
+
+    write_file_atomic "/etc/mysql/conf.d/galera.cnf" <<EOF
+[mysqld]
+# Galera Cluster Configuration
+wsrep_on=ON
+wsrep_provider=/usr/lib/galera/libgalera_smm.so
+wsrep_cluster_name="mariadb-galera-cluster"
+wsrep_cluster_address="gcomm://${cluster_ips}"
+wsrep_node_address="${current_ip}"
+wsrep_node_name="$(hostname)"
+wsrep_sst_method=rsync
+wsrep_sst_auth="sst_user:sst_password"   # Change this in production!
+
+# Basic settings
+bind-address=0.0.0.0
+default_storage_engine=InnoDB
+innodb_autoinc_lock_mode=2
+binlog_format=ROW
+EOF
+
+    success "Galera configuration generated"
+    info "Cluster address: gcomm://${cluster_ips}"
+}
+
+# =============================================================================
+# show_galera_help() - Help message
+# =============================================================================
+show_galera_help() {
+    cat <<EOF
+${APP_NAME} v${VERSION} — ${DESCRIPTION}
+
+Usage:
+  sudo ${APP_NAME}                    Full interactive guided cluster setup
+  sudo ${APP_NAME} install            Non-interactive installation only
+  sudo ${APP_NAME} list               List cluster IPs
+  sudo ${APP_NAME} add <ip>           Add IP to cluster
+  sudo ${APP_NAME} remove <ip>        Remove IP from cluster
+  ${APP_NAME} version                 Show version
+  ${APP_NAME} version-check           Compare with latest
+  sudo ${APP_NAME} self-update        Update to latest version
+  ${APP_NAME} help                    This help
+
+Options:
+  --force, --reinstall   Force reinstall or reset
+  --quiet, -q            Suppress non-error output
+
+EOF
+}
+
+# =============================================================================
+# main()
+# =============================================================================
+main() {
+    : "${HOME:=/root}"
+    : "${GLOBAL_BIN:=/usr/local/bin}"
+
+    local cmd="interactive"
+    local ADD_IP=""
+    local REMOVE_IP=""
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            version|-v)
+                cmd="version"
+                ;;
+            version-check)
+                cmd="version-check"
+                ;;
+            self-update)
+                cmd="self-update"
+                ;;
+            install)
+                cmd="install"
+                ;;
+            list)
+                cmd="list"
+                ;;
+            add)
+                cmd="add"
+                shift
+                ADD_IP="${1:-}"
+                ;;
+            remove|del)
+                cmd="remove"
+                shift
+                REMOVE_IP="${1:-}"
+                ;;
+            --force|--reinstall)
+                FORCE_REINSTALL=1
+                ;;
+            --quiet|-q)
+                QUIET=1
+                ;;
+            --help|-h)
+                cmd="help"
+                ;;
+            --*)
+                error "Unknown option: $1"
+                printf "Try: %s --help\n" "$APP_NAME" >&2
+                exit 1
+                ;;
+            *)
+                error "Unknown argument: $1"
+                printf "Try: %s --help\n" "$APP_NAME" >&2
+                exit 1
+                ;;
+        esac
+        shift
+    done
+
+    if [ "$cmd" = "version" ]; then
+        printf "%s version %s\n" "${APP_NAME}" "${VERSION}"
+        exit 0
+    fi
+
+    if [ "$cmd" = "version-check" ]; then
+        version_check
+        exit 0
+    fi
+
+    if [ "$cmd" = "self-update" ]; then
+        require_root
+        self_update
+        exit 0
+    fi
+
+    if [ "$cmd" = "help" ]; then
+        show_galera_help
+        exit 0
+    fi
+
+    # Check installation for commands that need the script
+    if ! is_installed; then
+        maybe_install
+        if ! is_installed; then
+            exit 1
+        fi
+    fi
+
+    case "${cmd}" in
+        install)
+            require_root
+            step_message "Non-interactive installation"
+            install_mariadb_galera
+            ensure_config_dir
+            success "Non-interactive installation completed"
+            info "Run 'sudo ${APP_NAME}' for interactive cluster setup"
+            ;;
+        list)
+            ip_conf_list
+            ;;
+        add)
+            require_root
+            if [ -n "${ADD_IP}" ]; then
+                ip_conf_add "${ADD_IP}"
+            else
+                error "Usage: ${APP_NAME} add <ip>"
+            fi
+            ;;
+        remove)
+            require_root
+            if [ -n "${REMOVE_IP}" ]; then
+                ip_conf_remove "${REMOVE_IP}"
+            else
+                error "Usage: ${APP_NAME} remove <ip>"
+            fi
+            ;;
+        interactive)
+            require_root
+            step_message "Starting interactive Galera cluster setup"
+
+            ensure_config_dir
+            list_local_ips
+
+            ip_conf_list
+
+            # Ask for current external IP
+            local current_ip
+            current_ip=$(detect_external_ip)
+            printf "\nDetected external IP: %s\n" "${current_ip}"
+            printf "Add this IP to cluster? (Y/n): "
+            read -r answer || true
+            if [ -z "$answer" ] || [[ "$answer" =~ ^[Yy] ]]; then
+                ip_conf_add "${current_ip}"
+            fi
+
+            # Interactive add more IPs
+            while true; do
+                printf "\nAdd another cluster IP? (ip or Enter to skip): "
+                read -r newip || true
+                if [ -z "$newip" ]; then
+                    break
+                fi
+                ip_conf_add "$newip"
+            done
+
+            # Remove IPs if wanted
+            printf "\nWould you like to remove any IP? (y/N): "
+            read -r rem || true
+            if [[ "$rem" =~ ^[Yy] ]]; then
+                ip_conf_list
+                printf "Enter IP to remove: "
+                read -r remip || true
+                if [ -n "$remip" ]; then
+                    ip_conf_remove "$remip"
+                fi
+            fi
+
+            generate_galera_config
+
+            # First node question
+            printf "\nIs this the FIRST computer in the cluster? (y/N): "
+            read -r first || true
+            if [[ "$first" =~ ^[Yy] ]]; then
+                success "Bootstrap this node with:"
+                echo "    sudo galera_new_cluster"
+                echo "    (or systemctl start mariadb after bootstrap)"
+            else
+                success "Start this node with:"
+                echo "    sudo systemctl start mariadb"
+            fi
+
+            empty_line
+            success "Setup completed. Check status with: sudo systemctl status mariadb"
+            info "Remember to open firewall port 3306, 4567, 4568, 4444 on all nodes."
+            ;;
+        *)
+            die "Invalid command"
+            ;;
+    esac
+}
+
+main "$@"
