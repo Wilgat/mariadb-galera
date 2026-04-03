@@ -1,6 +1,6 @@
 #!/bin/sh
 # =============================================================================
-# mariadb-galera – version 1.8.0
+# mariadb-galera – version 1.9.0
 # =============================================================================
 #
 # One-command installer + cluster IP manager for MariaDB Galera Cluster
@@ -54,7 +54,7 @@
 # ----------------------------- Project Constants -----------------------------
 
 APP_NAME="mariadb-galera"
-VERSION="1.8.0"
+VERSION="1.9.0"
 DESCRIPTION="MariaDB Galera Cluster installer + IP manager"
 
 REPO_USER="Wilgat"
@@ -666,6 +666,7 @@ Usage:
   ${APP_NAME} version                 Show version
   ${APP_NAME} version-check           Compare with latest
   sudo ${APP_NAME} self-update        Update to latest version
+  sudo ${APP_NAME} node|count         show numbers of nodes in the clusters
   ${APP_NAME} help                    This help
 
 Options:
@@ -761,6 +762,30 @@ interactive_setup() {
 }
 
 # =============================================================================
+# ip_conf_count() - Show number of nodes in the cluster
+# =============================================================================
+#
+# GENERAL PURPOSE:
+# Displays the current number of IPs (nodes) in the cluster.
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# =============================================================================
+
+ip_conf_count() {
+    if [ ! -f "${IP_CONF}" ] || [ ! -s "${IP_CONF}" ]; then
+        printf "0\n"
+        info "No cluster IP file found or file is empty."
+        return 0
+    fi
+
+    local count
+    count=$(grep -c '^[^#[:space:]]' "${IP_CONF}" 2>/dev/null || echo "0")
+
+    printf "%s\n" "${count}"
+    info "Total nodes in cluster: ${count}"
+}
+
+# =============================================================================
 # main()
 # =============================================================================
 main() {
@@ -805,6 +830,9 @@ main() {
                 cmd="remove"
                 shift
                 REMOVE_IP="${1:-}"
+                ;;
+            nodes|count)          # ← New sub-command added
+                cmd="nodes"
                 ;;
             --force|--reinstall)
                 FORCE_REINSTALL=1
@@ -869,6 +897,10 @@ main() {
 
         list)
             ip_conf_list
+            ;;
+
+        nodes|count)          # ← New case added
+            ip_conf_count
             ;;
 
         add)
